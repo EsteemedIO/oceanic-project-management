@@ -11,6 +11,7 @@ Modules:
 - projects_api: Project and task management with streaming
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -65,11 +66,14 @@ uvicorn_logger.setLevel(logging.WARNING)  # Only log warnings and errors, not ev
 # Global flag to track if initialization is complete
 _initialization_complete = False
 
+# Global spec-kit watcher instance
+spec_kit_watcher = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown tasks."""
-    global _initialization_complete
+    global _initialization_complete, spec_kit_watcher
     _initialization_complete = False
 
     # Startup
@@ -112,6 +116,26 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             api_logger.warning(f"Could not initialize prompt service: {e}")
 
+        # Initialize spec-kit file watcher (Oceanic-specific)
+        try:
+            from .services.spec_kit_watcher import SpecKitWatcherService
+
+            spec_kit_watcher = SpecKitWatcherService(specs_dir="/app/specs")
+            spec_kit_watcher.start()
+            api_logger.info("✅ Spec-Kit file watcher initialized")
+        except Exception as e:
+            api_logger.warning(f"Could not initialize spec-kit watcher: {e}")
+
+        # Set the main event loop for background tasks
+        try:
+            from .services.background_task_manager import get_task_manager
+
+            task_manager = get_task_manager()
+            current_loop = asyncio.get_running_loop()
+            task_manager.set_main_loop(current_loop)
+            api_logger.info("✅ Main event loop set for background tasks")
+        except Exception as e:
+            api_logger.warning(f"Could not set main event loop: {e}")
 
         # MCP Client functionality removed from architecture
         # Agents now use MCP tools directly
