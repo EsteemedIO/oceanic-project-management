@@ -63,6 +63,8 @@ server = [
     # Uncomment if ENABLE_DOCKER_SOCKET_MONITORING=true (not recommended - security risk)
     # "docker>=6.1.0",
     "tldextract>=5.0.0",
+    # Vespa backend dependencies
+    "tenacity>=8.0.0",  # Retry logic for Vespa client
     # Logging
     "logfire>=0.30.0",
     # Testing (needed for UI-triggered tests)

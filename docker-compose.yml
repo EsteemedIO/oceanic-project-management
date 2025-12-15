@@ -18,8 +18,12 @@ services:
     ports:
       - "${ARCHON_SERVER_PORT:-8181}:${ARCHON_SERVER_PORT:-8181}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Storage backend: "vespa" (local) or "supabase" (cloud)
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-vespa}
+      - VESPA_HOST=${VESPA_HOST:-http://host.docker.internal:8081}
+      # Supabase credentials (only used if STORAGE_BACKEND=supabase)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
@@ -82,8 +86,12 @@ services:
     ports:
       - "${ARCHON_MCP_PORT:-8051}:${ARCHON_MCP_PORT:-8051}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Storage backend: "vespa" (local) or "supabase" (cloud)
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-vespa}
+      - VESPA_HOST=${VESPA_HOST:-http://host.docker.internal:8081}
+      # Supabase credentials (only used if STORAGE_BACKEND=supabase)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
       - TRANSPORT=sse
@@ -130,8 +138,12 @@ services:
     ports:
       - "${ARCHON_AGENTS_PORT:-8052}:${ARCHON_AGENTS_PORT:-8052}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      # Storage backend: "vespa" (local) or "supabase" (cloud)
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-vespa}
+      - VESPA_HOST=${VESPA_HOST:-http://host.docker.internal:8081}
+      # Supabase credentials (only used if STORAGE_BACKEND=supabase)
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
