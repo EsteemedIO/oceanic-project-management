@@ -42,6 +42,7 @@ services:
       - ./python/src:/app/src # Mount source code for hot reload
       - ./python/tests:/app/tests # Mount tests for UI test execution
       - ./migration:/app/migration # Mount migration files for version tracking
+      - ../../runtime/specs:/app/specs # Mount runtime specs (App Builder generated via SpecKit.ts/sparc.ts)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

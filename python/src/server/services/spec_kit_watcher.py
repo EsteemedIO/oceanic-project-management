@@ -3,6 +3,12 @@ Spec-Kit File Watcher Service
 
 Watches the specs/ directory for spec-kit generated files and automatically
 creates projects and tasks in Archon when new specifications are created.
+
+Backend Support:
+    - Supabase (default): Uses direct Supabase client for CRUD operations
+    - Vespa: Uses Vespa repository layer with hybrid search capabilities
+
+Set STORAGE_BACKEND=vespa to use Vespa backend.
 """
 
 import asyncio
@@ -12,7 +18,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from .spec_kit_parser import SpecKitParser
-from .projects import ProjectService, TaskService
+from .projects import get_project_service, get_task_service, is_vespa_enabled
 from ..config.logfire_config import get_logger
 
 logger = get_logger(__name__)
@@ -23,11 +29,16 @@ class SpecKitFileHandler(FileSystemEventHandler):
 
     def __init__(self, specs_dir: str = "specs", loop: Optional[asyncio.AbstractEventLoop] = None):
         self.specs_dir = Path(specs_dir)
-        self.project_service = ProjectService()
-        self.task_service = TaskService()
+        # Use service factory for backend-agnostic service creation
+        self.project_service = get_project_service()
+        self.task_service = get_task_service()
         self.parser = SpecKitParser()
         self.processing = set()  # Track files being processed to avoid duplicates
         self.loop = loop  # Store reference to main event loop for thread-safe calls
+
+        # Log which backend is being used
+        backend = "Vespa" if is_vespa_enabled() else "Supabase"
+        logger.info(f"📦 SpecKitFileHandler initialized with {backend} backend")
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the event loop for thread-safe async calls"""
@@ -88,20 +99,7 @@ class SpecKitFileHandler(FileSystemEventHandler):
             # Parse feature specification
             spec_data = await self.parser.parse_feature_spec(feature_file)
 
-            # Create project using Archon's existing service
-            success, result = self.project_service.create_project(
-                title=spec_data['name'],
-                github_repo=spec_data.get('branch')  # Store branch in github_repo field
-            )
-
-            if not success:
-                logger.error(f"Failed to create project: {result.get('error')}")
-                return
-
-            project = result['project']
-            project_id = project['id']
-
-            # Update project with spec-kit metadata in data field
+            # Build metadata for the project
             metadata = {
                 'source': 'spec-kit',
                 'feature_number': spec_data['feature_number'],
@@ -113,10 +111,30 @@ class SpecKitFileHandler(FileSystemEventHandler):
                 }
             }
 
-            # Store metadata in project data field
-            update_response = self.project_service.supabase_client.table("archon_projects").update({
-                "data": [metadata]
-            }).eq("id", project_id).execute()
+            # Create project with description including metadata
+            # For Vespa backend, description is embedded and searchable
+            description = spec_data.get('description', '')
+            if metadata.get('feature_number'):
+                description = f"[{metadata['feature_number']}] {description}"
+
+            success, result = self.project_service.create_project(
+                title=spec_data['name'],
+                github_repo=spec_data.get('branch'),  # Store branch in github_repo field
+                description=description
+            )
+
+            if not success:
+                logger.error(f"Failed to create project: {result.get('error')}")
+                return
+
+            project = result['project']
+            project_id = project['id']
+
+            # For Supabase backend, store additional metadata in data field
+            if not is_vespa_enabled() and hasattr(self.project_service, 'supabase_client'):
+                self.project_service.supabase_client.table("archon_projects").update({
+                    "data": [metadata]
+                }).eq("id", project_id).execute()
 
             logger.info(f"✅ Project created: {project_id} ({project['title']})")
 
@@ -183,12 +201,16 @@ class SpecKitFileHandler(FileSystemEventHandler):
             if feature_file.exists():
                 spec_data = await self.parser.parse_feature_spec(feature_file)
 
-                # Update project title
-                self.project_service.supabase_client.table("archon_projects").update({
-                    "title": spec_data['name']
-                }).eq("id", project_id).execute()
+                # Update project using service method (works for both backends)
+                success, result = self.project_service.update_project(
+                    project_id=project_id,
+                    title=spec_data['name']
+                )
 
-                logger.info(f"✅ Updated project {project_id}")
+                if success:
+                    logger.info(f"✅ Updated project {project_id}")
+                else:
+                    logger.error(f"Failed to update project {project_id}: {result.get('error')}")
 
             # Sync tasks from tasks.md
             tasks_file = feature_dir / "tasks.md"
@@ -206,11 +228,13 @@ class SpecKitFileHandler(FileSystemEventHandler):
             if not file_tasks:
                 return
 
-            # Get existing tasks from database
-            existing_response = self.task_service.supabase_client.table("archon_tasks").select(
-                "id, title"
-            ).eq("project_id", project_id).execute()
-            existing_tasks = existing_response.data or []
+            # Get existing tasks using the task service (works for both backends)
+            success, result = self.task_service.list_tasks(project_id=project_id)
+            if not success:
+                logger.error(f"Failed to list existing tasks: {result.get('error')}")
+                return
+
+            existing_tasks = result.get('tasks', [])
             existing_titles = {task['title'] for task in existing_tasks}
 
             # Find new tasks (in file but not in database)
@@ -328,14 +352,14 @@ class SpecKitWatcherService:
 
                     if existing_project:
                         logger.info(f"✓ Project already exists for {feature_name}")
-                        # Check if tasks need to be created by querying the database
+                        # Check if tasks need to be created using the task service
                         tasks_file = item / "tasks.md"
                         if tasks_file.exists():
-                            # Query database for actual task count
+                            # Query task count using service method (works for both backends)
                             project_id = existing_project.get('id')
                             try:
-                                task_response = self.event_handler.task_service.supabase_client.table("archon_tasks").select("id", count="exact").eq("project_id", project_id).execute()
-                                task_count = task_response.count or 0
+                                success, result = self.event_handler.task_service.list_tasks(project_id=project_id)
+                                task_count = len(result.get('tasks', [])) if success else 0
                             except Exception as e:
                                 logger.error(f"Error checking task count: {e}")
                                 task_count = 0

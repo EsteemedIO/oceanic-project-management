@@ -38,6 +38,7 @@ server = [
     "uvicorn>=0.24.0",
     "python-multipart>=0.0.20",
     "watchfiles>=0.18",
+    "watchdog>=4.0.0",  # For spec-kit file watcher (auto-sync tasks.md)
     # Web crawling
     "crawl4ai==0.7.4",
     # Database and storage
@@ -119,6 +120,7 @@ all = [
     "uvicorn>=0.24.0",
     "python-multipart>=0.0.20",
     "watchfiles>=0.18",
+    "watchdog>=4.0.0",  # For spec-kit file watcher
     "crawl4ai==0.7.4",
     "supabase==2.15.1",
     "asyncpg>=0.29.0",
