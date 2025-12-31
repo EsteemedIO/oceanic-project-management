@@ -75,7 +75,8 @@ class VespaClient:
             Full document URL for CRUD operations
         """
         # Vespa document API: /document/v1/{namespace}/{document-type}/docid/{docid}
-        return f"{self.vespa_host}/document/v1/oceanic/{schema_name}/docid/{document_id}"
+        # Using danswer_index namespace to match Echo's content cluster
+        return f"{self.vespa_host}/document/v1/danswer_index/{schema_name}/docid/{document_id}"
 
     def _search_url(self) -> str:
         """Construct Vespa search API URL.
@@ -98,7 +99,7 @@ class VespaClient:
     ) -> dict[str, Any]:
         """Insert or replace a document in Vespa.
 
-        Uses PUT with full document replacement. Retries on transient failures.
+        Uses POST for document creation. Retries on transient failures.
 
         Args:
             schema_name: Vespa schema name
@@ -130,7 +131,7 @@ class VespaClient:
                 }
             )
 
-            response = client.put(
+            response = client.post(
                 url,
                 json={"fields": fields},
                 headers={"Content-Type": "application/json"},

@@ -7,14 +7,60 @@ separating business logic from transport-specific code.
 """
 
 # Removed direct logging import - using unified config
+import json
+import os
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+
+import redis
 
 from src.server.utils import get_supabase_client
 
 from ...config.logfire_config import get_logger
 
 logger = get_logger(__name__)
+
+# Redis cache configuration
+REDIS_HOST = os.getenv("REDIS_HOST", "oceanic-redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+PROJECTS_CACHE_KEY = "archon:projects:list"
+PROJECTS_CACHE_TTL = int(os.getenv("PROJECTS_CACHE_TTL", "60"))  # 60 seconds default
+
+# Lazy Redis client initialization
+_redis_client: Optional[redis.Redis] = None
+
+
+def get_redis_client() -> Optional[redis.Redis]:
+    """Get or create Redis client with connection pooling."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            _redis_client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            # Test connection
+            _redis_client.ping()
+            logger.info(f"Redis client connected to {REDIS_HOST}:{REDIS_PORT}")
+        except Exception as e:
+            logger.warning(f"Redis connection failed, caching disabled: {e}")
+            _redis_client = None
+    return _redis_client
+
+
+def invalidate_projects_cache():
+    """Invalidate all projects cache entries."""
+    redis_client = get_redis_client()
+    if redis_client:
+        try:
+            # Delete both full and lite cache keys
+            redis_client.delete(f"{PROJECTS_CACHE_KEY}:full", f"{PROJECTS_CACHE_KEY}:lite")
+            logger.debug("Projects cache invalidated")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate projects cache: {e}")
 
 
 class ProjectService:
@@ -60,6 +106,9 @@ class ProjectService:
             project_id = project["id"]
             logger.info(f"Project created successfully with ID: {project_id}")
 
+            # Invalidate cache on project creation
+            invalidate_projects_cache()
+
             return True, {
                 "project": {
                     "id": project_id,
@@ -75,7 +124,7 @@ class ProjectService:
 
     def list_projects(self, include_content: bool = True) -> tuple[bool, dict[str, Any]]:
         """
-        List all projects.
+        List all projects with Redis caching for instant response times.
 
         Args:
             include_content: If True (default), includes docs, features, data fields.
@@ -85,6 +134,21 @@ class ProjectService:
             Tuple of (success, result_dict)
         """
         try:
+            # Try to get from Redis cache first
+            cache_key = f"{PROJECTS_CACHE_KEY}:full" if include_content else f"{PROJECTS_CACHE_KEY}:lite"
+            redis_client = get_redis_client()
+
+            if redis_client:
+                try:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        logger.debug(f"Cache HIT for projects list (include_content={include_content})")
+                        return True, json.loads(cached)
+                    logger.debug(f"Cache MISS for projects list (include_content={include_content})")
+                except Exception as e:
+                    logger.warning(f"Redis cache read failed: {e}")
+
+            # Fetch from Supabase
             if include_content:
                 # Current behavior - maintain backward compatibility
                 response = (
@@ -141,7 +205,17 @@ class ProjectService:
                         }
                     })
 
-            return True, {"projects": projects, "total_count": len(projects)}
+            result = {"projects": projects, "total_count": len(projects)}
+
+            # Cache the result in Redis
+            if redis_client:
+                try:
+                    redis_client.setex(cache_key, PROJECTS_CACHE_TTL, json.dumps(result))
+                    logger.debug(f"Cached projects list (TTL={PROJECTS_CACHE_TTL}s)")
+                except Exception as e:
+                    logger.warning(f"Redis cache write failed: {e}")
+
+            return True, result
 
         except Exception as e:
             logger.error(f"Error listing projects: {e}")
@@ -259,6 +333,9 @@ class ProjectService:
                 .execute()
             )
 
+            # Invalidate cache on project deletion
+            invalidate_projects_cache()
+
             # For DELETE operations, success is indicated by no error, not by response.data content
             # response.data will be empty list [] even on successful deletion
             return True, {
@@ -366,6 +443,8 @@ class ProjectService:
 
             if response.data and len(response.data) > 0:
                 project = response.data[0]
+                # Invalidate cache on project update
+                invalidate_projects_cache()
                 return True, {"project": project, "message": "Project updated successfully"}
             else:
                 # If update didn't return data, fetch the project to ensure it exists and get current state
@@ -377,6 +456,8 @@ class ProjectService:
                 )
                 if get_response.data and len(get_response.data) > 0:
                     project = get_response.data[0]
+                    # Invalidate cache on project update
+                    invalidate_projects_cache()
                     return True, {"project": project, "message": "Project updated successfully"}
                 else:
                     return False, {"error": f"Project with ID {project_id} not found"}
